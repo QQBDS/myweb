@@ -408,6 +408,23 @@ button{font-family:inherit;cursor:pointer;border:none;background:none}
 .admin-form h4{margin-bottom:14px;color:var(--primary-deep);font-size:1rem}
 .admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .admin-form-btns{display:flex;gap:12px;align-items:center;margin-top:4px}
+.upload-row{display:flex;gap:10px}
+.upload-row input{flex:1;min-width:0}
+.upload-btn{
+  flex-shrink:0;padding:11px 18px;border-radius:12px;border:1.5px dashed var(--primary);
+  background:var(--primary-soft);color:var(--primary-deep);font-size:.88rem;font-weight:700;
+  cursor:pointer;transition:all .2s;white-space:nowrap;font-family:inherit;
+}
+.upload-btn:hover{background:var(--primary);color:#fff;border-style:solid}
+.upload-preview{
+  display:flex;align-items:center;gap:12px;margin-top:10px;padding:10px 12px;
+  border:1.5px solid var(--border);border-radius:12px;background:#F8FBFD;
+}
+.upload-preview[hidden]{display:none}
+.upload-preview img{width:72px;height:54px;object-fit:cover;border-radius:8px;flex-shrink:0}
+.upload-preview-info{flex:1;min-width:0;font-size:.82rem;color:var(--text-sub);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.upload-preview-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.admin-form.dragover{outline:2.5px dashed var(--primary);outline-offset:4px}
 .admin-btn2{
   padding:9px 20px;border-radius:999px;border:1.5px solid var(--border);
   font-size:.85rem;font-weight:600;color:var(--text-sub);transition:all .2s;background:#fff;
@@ -733,11 +750,21 @@ button{font-family:inherit;cursor:pointer;border:none;background:none}
       </section>
 
       <section class="admin-pane" data-pane="photos">
-        <div class="admin-hint">照片墙支持任意图片网址或 assets/ 下的相对路径，建议横图（4:3 左右效果最佳）。</div>
+        <div class="admin-hint">支持本地上传（自动压缩为 JPEG，可拖拽图片到表单内），也支持图片网址或 assets/ 路径。上传的照片保存在浏览器里，想同步给所有访客请用「数据 → 复制为代码」导出后提交仓库。</div>
         <form class="admin-form" id="admin-photos-form">
           <h4 id="qf-heading">✚ 新增照片</h4>
           <input type="hidden" id="qf-id">
-          <div class="field"><label for="qf-src">图片地址</label><input id="qf-src" placeholder="https://… 或 assets/xxx.jpg"></div>
+          <div class="field"><label for="qf-src">图片地址（与本地上传二选一）</label>
+            <div class="upload-row">
+              <input id="qf-src" placeholder="https://… 或 assets/xxx.jpg">
+              <button type="button" class="upload-btn" id="qf-upload-btn">📁 本地上传</button>
+              <input type="file" id="qf-file" accept="image/*" hidden>
+            </div>
+            <div class="upload-preview" id="qf-preview" hidden>
+              <img id="qf-preview-img" alt="待上传图片预览">
+              <div class="upload-preview-info"><span id="qf-preview-name"></span><button type="button" class="admin-btn2" id="qf-remove">✕ 移除</button></div>
+            </div>
+          </div>
           <div class="field"><label for="qf-cap">照片说明</label><input id="qf-cap" maxlength="40" placeholder="爪印拿铁 · 巷口咖啡店"></div>
           <div class="admin-form-btns">
             <button type="submit" class="btn-primary">💾 保存照片</button>
@@ -1351,7 +1378,15 @@ function renderAdminLists(){
       switchAdminTab("posts");
     } else if(kind === "photo"){
       const p = DATA.photos.find(x => x._id === id); if(!p) return;
-      $("#qf-id").value = p._id; $("#qf-src").value = p.src; $("#qf-cap").value = p.cap || "";
+      $("#qf-id").value = p._id; $("#qf-cap").value = p.cap || "";
+      if(p.src && p.src.startsWith("data:")){
+        hideUploadPreview();
+        showUploadPreview({ dataUrl: p.src, name: "已上传的本地图片" });
+        $("#qf-src").value = "";
+      } else {
+        hideUploadPreview();
+        $("#qf-src").value = p.src;
+      }
       $("#qf-heading").textContent = "✎ 编辑照片";
       switchAdminTab("photos");
     } else if(kind === "friend"){
@@ -1411,17 +1446,95 @@ $("#admin-posts-form").addEventListener("submit", e => {
 });
 
 /* ---- 照片 CRUD ---- */
+let pendingUpload = null;
+function compressImage(file, maxEdge, quality){
+  return new Promise((resolve, reject) => {
+    if(!file.type.startsWith("image/")){ reject(new Error("请选择图片文件")); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        try{
+          const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/jpeg", quality));
+        }catch(err){ reject(err); }
+      };
+      img.onerror = () => reject(new Error("图片读取失败"));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error("文件读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
+function showUploadPreview(u){
+  pendingUpload = u;
+  $("#qf-preview-img").src = u.dataUrl;
+  $("#qf-preview-name").textContent = u.name + " · " + (u.dataUrl.length / 1024).toFixed(0) + " KB（已压缩）";
+  $("#qf-preview").hidden = false;
+}
+function hideUploadPreview(){
+  pendingUpload = null;
+  $("#qf-preview").hidden = true;
+  $("#qf-file").value = "";
+}
+async function handlePhotoUpload(file){
+  if(!file) return;
+  if(!file.type.startsWith("image/")){ toast("只能上传图片文件哦"); return; }
+  if(file.size > 20 * 1024 * 1024){ toast("图片太大了，请选 20MB 以内的文件"); return; }
+  toast("正在压缩图片…");
+  try{
+    const dataUrl = await compressImage(file, 1280, 0.82);
+    showUploadPreview({ dataUrl, name: file.name || "本地图片" });
+    $("#qf-src").value = "";
+    toast("图片已就绪，填写说明后保存 ✅");
+  }catch(err){ toast("处理失败：" + err.message); }
+}
+$("#qf-upload-btn").addEventListener("click", () => $("#qf-file").click());
+$("#qf-file").addEventListener("change", async e => {
+  await handlePhotoUpload(e.target.files[0]);
+  e.target.value = "";
+});
+$("#qf-remove").addEventListener("click", hideUploadPreview);
+["dragover", "dragenter"].forEach(ev => $("#admin-photos-form").addEventListener(ev, e => {
+  e.preventDefault();
+  $("#admin-photos-form").classList.add("dragover");
+}));
+["dragleave", "drop"].forEach(ev => $("#admin-photos-form").addEventListener(ev, e => {
+  e.preventDefault();
+  $("#admin-photos-form").classList.remove("dragover");
+}));
+$("#admin-photos-form").addEventListener("drop", async e => {
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  await handlePhotoUpload(file);
+});
+function storageUsageKB(){
+  let total = 0;
+  for(let i = 0; i < localStorage.length; i++){
+    const k = localStorage.key(i);
+    total += k.length + (localStorage.getItem(k) || "").length;
+  }
+  return total / 1024;
+}
 function clearPhotoForm(){
   $("#admin-photos-form").reset();
   $("#qf-id").value = "";
+  hideUploadPreview();
   $("#qf-heading").textContent = "✚ 新增照片";
 }
 $("#qf-clear").addEventListener("click", clearPhotoForm);
 $("#admin-photos-form").addEventListener("submit", e => {
   e.preventDefault();
-  const src = $("#qf-src").value.trim();
+  const src = pendingUpload ? pendingUpload.dataUrl : $("#qf-src").value.trim();
   const cap = $("#qf-cap").value.trim() || "未命名照片";
-  if(!src){ toast("图片地址不能为空"); return; }
+  if(!src){ toast("请上传本地图片或填写图片地址"); return; }
   const id = $("#qf-id").value;
   if(id){
     const i = DATA.photos.findIndex(p => p._id === id);
@@ -1431,8 +1544,9 @@ $("#admin-photos-form").addEventListener("submit", e => {
   }
   saveData();
   refreshAll();
+  const used = storageUsageKB();
+  toast("照片已保存 ✅" + (used > 3500 ? "（注意：浏览器存储已用 " + used.toFixed(0) + "KB，接近上限，建议用「复制为代码」固化到仓库）" : ""));
   clearPhotoForm();
-  toast("照片已保存 ✅");
 });
 
 /* ---- 扩列 CRUD ---- */
