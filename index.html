@@ -847,7 +847,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none}
       </section>
 
       <section class="admin-pane" data-pane="data">
-        <div class="admin-hint">管理面板的修改保存在浏览器 localStorage 中——换浏览器或清除缓存会丢失。要永久写进网页文件：点「复制为代码」，然后把 index.html 里「内容数据」编辑区的 DEFAULT_DATA 整段替换掉即可。</div>
+        <div class="admin-hint">管理面板的修改保存在浏览器 localStorage 中——只有当前浏览器可见，换设备不会同步。要让所有访客（含手机）看到：点「复制为代码」→ 替换 index.html 里「内容数据」编辑区的 DEFAULT_DATA 整段 → 提交仓库推送。生成的代码会自动升版本号，推送后所有设备自动刷新到新内容。</div>
         <div class="admin-sec-title">备份与迁移</div>
         <div class="admin-row-btns">
           <button class="btn-primary" id="admin-export">⬇ 导出 JSON 备份</button>
@@ -915,6 +915,7 @@ const IMG = {
 
 /* ===== 内容数据（编辑区）：日常更新请用页脚「管理入口」面板，无需改动代码 ===== */
 const DEFAULT_DATA = {
+  version: 2,
   site:{
     name:"麟月", badge:"蓝鲨 · Blue Shark",
     heroSlogan:"把日子过成波光粼粼的样子，欢迎潜进我的小窝坐坐 💙",
@@ -993,10 +994,11 @@ const DEFAULT_DATA = {
   ]
 };
 
-/* ---- 数据存取：管理面板的修改保存在 localStorage，优先于上方默认值 ---- */
+/* ---- 数据存取：管理面板的修改保存在 localStorage；文件 version 更新后所有设备的旧缓存自动失效 ---- */
 const STORE_KEY = "momo_site_data_v2";
 function deepCopy(o){ return JSON.parse(JSON.stringify(o)); }
 function normalizeData(d){
+  d.version = d.version || 0;
   d.site = Object.assign(deepCopy(DEFAULT_DATA.site), d.site || {});
   d.posts = (d.posts || []).map(p => Object.assign({ id:"p" + Math.random().toString(36).slice(2,9) }, p));
   d.photos = (d.photos || []).map((p,i) => Object.assign({ _id:"ph" + i }, p));
@@ -1009,7 +1011,10 @@ function normalizeData(d){
 function loadData(){
   try{
     const raw = localStorage.getItem(STORE_KEY);
-    if(raw) return normalizeData(JSON.parse(raw));
+    if(raw){
+      const d = JSON.parse(raw);
+      if((d.version || 0) >= DEFAULT_DATA.version) return normalizeData(d);
+    }
   }catch(e){}
   const d = deepCopy(DEFAULT_DATA);
   try{
@@ -1683,6 +1688,7 @@ $("#admin-import").addEventListener("change", e => {
       const d = JSON.parse(r.result);
       if(!d.posts || !d.site) throw new Error("bad");
       DATA = normalizeData(d);
+      DATA.version = DEFAULT_DATA.version;
       saveData();
       refreshAll();
       fillSiteForm();
@@ -1695,7 +1701,8 @@ $("#admin-import").addEventListener("change", e => {
   e.target.value = "";
 });
 function genCodeText(){
-  return "const DEFAULT_DATA = " + JSON.stringify(DATA, null, 2) + ";";
+  const out = Object.assign({}, DATA, { version: (DATA.version || 0) + 1 });
+  return "const DEFAULT_DATA = " + JSON.stringify(out, null, 2) + ";";
 }
 $("#admin-gencode").addEventListener("click", () => {
   $("#admin-code").value = genCodeText();
